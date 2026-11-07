@@ -17,6 +17,43 @@ class SavingsGoal {
       targetPaise > 0 ? (savedPaise / targetPaise).clamp(0.0, 1.0) : 0.0;
 
   bool get isCompleted => savedPaise >= targetPaise;
+
+  SavingsGoal copyWith({
+    String? id,
+    String? title,
+    int? targetPaise,
+    int? savedPaise,
+    DateTime? targetDate,
+  }) {
+    return SavingsGoal(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      targetPaise: targetPaise ?? this.targetPaise,
+      savedPaise: savedPaise ?? this.savedPaise,
+      targetDate: targetDate ?? this.targetDate,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'targetPaise': targetPaise,
+      'savedPaise': savedPaise,
+      'targetDate': targetDate.toIso8601String(),
+    };
+  }
+
+  factory SavingsGoal.fromJson(Map<String, dynamic> json) {
+    return SavingsGoal(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? 'Goal',
+      targetPaise: (json['targetPaise'] as num?)?.toInt() ?? 0,
+      savedPaise: (json['savedPaise'] as num?)?.toInt() ?? 0,
+      targetDate: DateTime.tryParse(json['targetDate'] as String? ?? '') ??
+          DateTime.now().add(const Duration(days: 90)),
+    );
+  }
 }
 
 final List<SavingsGoal> sampleGoals = [
@@ -25,20 +62,13 @@ final List<SavingsGoal> sampleGoals = [
     title: 'Emergency Fund',
     targetPaise: 30000000,
     savedPaise: 18500000,
-    targetDate: DateTime(2027, 3, 31),
+    targetDate: DateTime.now().add(const Duration(days: 180)),
   ),
   SavingsGoal(
     id: 'g2',
-    title: 'Vacation — Bali',
+    title: 'Vacation',
     targetPaise: 8000000,
     savedPaise: 5600000,
-    targetDate: DateTime(2027, 6, 1),
-  ),
-  SavingsGoal(
-    id: 'g3',
-    title: 'New Laptop',
-    targetPaise: 12000000,
-    savedPaise: 12000000,
-    targetDate: DateTime(2026, 12, 31),
+    targetDate: DateTime.now().add(const Duration(days: 120)),
   ),
 ];

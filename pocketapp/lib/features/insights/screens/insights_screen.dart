@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../core/models/transaction.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/month_selector.dart';
 import '../../../core/widgets/empty_state.dart';
@@ -14,36 +15,90 @@ class InsightsScreen extends StatefulWidget {
 }
 
 class _InsightsScreenState extends State<InsightsScreen> {
-  String _selectedMonth = 'October 2026';
+  late String _selectedMonth;
   bool _isLoading = true;
 
-  // Demo data
   int _highestSpendPaise = 0;
-  String _highestSpendRange = '';
+  String _highestSpendRange = 'No data';
   List<_CategorySpend> _categorySpends = [];
 
   @override
   void initState() {
     super.initState();
+    _selectedMonth = getCurrentMonthString();
     _loadData();
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 900));
+    final storage = StorageService();
+    final allTxs = await storage.getTransactions();
+    final selectedDt = parseMonthYear(_selectedMonth);
+
+    // Filter expenses in this month & year
+    final monthExpenses = allTxs.where((t) =>
+        t.direction == TransactionDirection.expense &&
+        t.dateTime.month == selectedDt.month &&
+        t.dateTime.year == selectedDt.year).toList();
+
+    // Group expenses by category
+    final Map<TransactionCategory, int> catTotals = {};
+    for (final tx in monthExpenses) {
+      catTotals[tx.category] = (catTotals[tx.category] ?? 0) + tx.amountPaise;
+    }
+
+    final budgets = await storage.getBudgets(
+      month: selectedDt.month,
+      year: selectedDt.year,
+    );
+
+    final List<_CategorySpend> spends = [];
+    for (final entry in catTotals.entries) {
+      final b = budgets.where((b) => b.category == entry.key).firstOrNull;
+      spends.add(_CategorySpend(
+        entry.key,
+        entry.value,
+        b?.limitPaise ?? 0,
+      ));
+    }
+    spends.sort((a, b) => b.spentPaise.compareTo(a.spentPaise));
+
+    // Calculate highest 7-day spend in this month
+    int max7Day = 0;
+    String max7DayRange = 'Month to date';
+
+    if (monthExpenses.isNotEmpty) {
+      // Aggregate by day of month (1..31)
+      final Map<int, int> daySpend = {};
+      for (final tx in monthExpenses) {
+        final d = tx.dateTime.day;
+        daySpend[d] = (daySpend[d] ?? 0) + tx.amountPaise;
+      }
+
+      int bestSum = 0;
+      int bestStartDay = 1;
+      for (int start = 1; start <= 24; start++) {
+        int windowSum = 0;
+        for (int i = 0; i < 7; i++) {
+          windowSum += daySpend[start + i] ?? 0;
+        }
+        if (windowSum > bestSum) {
+          bestSum = windowSum;
+          bestStartDay = start;
+        }
+      }
+      max7Day = bestSum;
+      const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final mName = monthNames[selectedDt.month];
+      max7DayRange = '$bestStartDay - ${bestStartDay + 6} $mName';
+    }
+
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _highestSpendPaise = 950000;
-      _highestSpendRange = '15 - 21 Oct';
-      _categorySpends = [
-        _CategorySpend(TransactionCategory.food, 1100000, 1500000),
-        _CategorySpend(TransactionCategory.shopping, 850000, 850000),
-        _CategorySpend(TransactionCategory.utilities, 234000, 400000),
-        _CategorySpend(TransactionCategory.transport, 320000, 500000),
-        _CategorySpend(TransactionCategory.entertainment, 289000, 300000),
-        _CategorySpend(TransactionCategory.health, 87500, 200000),
-      ]..sort((a, b) => b.spentPaise.compareTo(a.spentPaise));
+      _highestSpendPaise = max7Day;
+      _highestSpendRange = max7DayRange;
+      _categorySpends = spends;
     });
   }
 
@@ -80,7 +135,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
                 const SkeletonCard(height: 130),
                 const SizedBox(height: 16),
                 ...List.generate(
-                    5, (_) => const Padding(
+                    5,
+                    (_) => const Padding(
                           padding: EdgeInsets.only(bottom: 12),
                           child: SkeletonCard(height: 72),
                         )),
@@ -90,11 +146,18 @@ class _InsightsScreenState extends State<InsightsScreen> {
               color: AppColors.primary,
               onRefresh: _loadData,
               child: _categorySpends.isEmpty
-                  ? const EmptyState(
+                  ? EmptyState(
                       emoji: '📈',
-                      title: 'No insights yet',
+                      title: 'No expenses for $_selectedMonth',
                       subtitle:
-                          'Add some confirmed expenses to see spending insights.',
+                          'Record expenses from the Add screen to see insightful breakdowns here.',
+                      action: ElevatedButton.icon(
+                        onPressed: () => Navigator.of(context)
+                            .pushNamed('/add-expense')
+                            .then((_) => _loadData()),
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: const Text('Add Expense'),
+                      ),
                     )
                   : ListView(
                       padding: const EdgeInsets.all(16),
@@ -122,12 +185,12 @@ class _InsightsScreenState extends State<InsightsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.local_fire_department_rounded,
+              Icon(Icons.local_fire_department_rounded,
                   size: 18, color: AppColors.primary),
-              const SizedBox(width: 6),
-              const Text(
+              SizedBox(width: 6),
+              Text(
                 'Highest 7-Day Spend',
                 style: TextStyle(
                   fontSize: 14,
@@ -180,9 +243,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
   }
 
   Widget _buildCategoryBreakdown() {
-    final maxSpend = _categorySpends.isNotEmpty
-        ? _categorySpends.first.spentPaise
-        : 1;
+    final maxSpend =
+        _categorySpends.isNotEmpty ? _categorySpends.first.spentPaise : 1;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -235,8 +297,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
                               ),
                             ),
                             Text(
-                              CurrencyFormatter.formatPaise(
-                                  spend.spentPaise),
+                              CurrencyFormatter.formatPaise(spend.spentPaise),
                               style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
@@ -264,9 +325,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
                           child: LinearProgressIndicator(
                             value: barRatio,
                             backgroundColor: AppColors.neutralGreyLight,
-                            valueColor:
-                                const AlwaysStoppedAnimation<Color>(
-                                    AppColors.primary),
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                                AppColors.primary),
                             minHeight: 6,
                           ),
                         ),
@@ -304,7 +364,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Includes confirmed expenses only. Missing calendar days count as zero.',
+              'Stored on phone storage. Calculated in real-time from your confirmed transactions.',
               style: TextStyle(
                 fontSize: 12,
                 color: AppColors.textMedium,

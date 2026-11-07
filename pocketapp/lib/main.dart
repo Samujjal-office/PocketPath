@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/theme/app_theme.dart';
+import 'core/services/storage_service.dart';
 import 'features/auth/screens/sign_in_screen.dart';
 import 'features/dashboard/screens/dashboard_screen.dart';
 import 'features/transactions/screens/transactions_screen.dart';
@@ -11,8 +12,9 @@ import 'features/goals/screens/goals_screen.dart';
 import 'features/insights/screens/insights_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await StorageService().init();
 
   // Lock to portrait mode for mobile-first design
   SystemChrome.setPreferredOrientations([

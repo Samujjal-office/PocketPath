@@ -4,6 +4,7 @@ import '../../../core/utils/currency_formatter.dart';
 import '../../../core/models/transaction.dart';
 import '../../../core/models/budget.dart';
 import '../../../core/models/savings_goal.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/widgets/offline_banner.dart';
 import '../../../core/widgets/month_selector.dart';
 import '../../../core/widgets/skeleton_loader.dart';
@@ -17,9 +18,9 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  String _selectedMonth = 'October 2026';
+  late String _selectedMonth;
   bool _isLoading = true;
-  bool _isOffline = false;
+  final bool _isOffline = false;
 
   // Aggregated data
   int _totalIncomePaise = 0;
@@ -31,21 +32,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _selectedMonth = getCurrentMonthString();
     _loadData();
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 900));
+    final storage = StorageService();
+    final allTxs = await storage.getTransactions();
+
+    final selectedDt = parseMonthYear(_selectedMonth);
+
+    final monthTxs = allTxs.where((t) =>
+        t.dateTime.month == selectedDt.month &&
+        t.dateTime.year == selectedDt.year).toList();
+
+    final income = monthTxs
+        .where((t) => t.direction == TransactionDirection.income)
+        .fold<int>(0, (sum, t) => sum + t.amountPaise);
+    final expense = monthTxs
+        .where((t) => t.direction == TransactionDirection.expense)
+        .fold<int>(0, (sum, t) => sum + t.amountPaise);
+
+    final budgets = await storage.getBudgets(
+      month: selectedDt.month,
+      year: selectedDt.year,
+    );
+
+    Budget? highestBudget;
+    if (budgets.isNotEmpty) {
+      highestBudget = budgets.reduce((a, b) =>
+          a.utilizationRatio > b.utilizationRatio ? a : b);
+    }
+
+    final goals = await storage.getSavingsGoals();
+    final primaryGoal = goals.isNotEmpty ? goals.first : null;
+
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _totalIncomePaise = 8500000;
-      _totalExpensePaise = 2521900;
-      _highestUtilizedBudget = sampleBudgets.reduce(
-          (a, b) => a.utilizationRatio > b.utilizationRatio ? a : b);
-      _primaryGoal = sampleGoals.first;
-      _recentTransactions = sampleTransactions.take(3).toList();
+      _totalIncomePaise = income;
+      _totalExpensePaise = expense;
+      _highestUtilizedBudget = highestBudget;
+      _primaryGoal = primaryGoal;
+      _recentTransactions = allTxs.take(4).toList();
     });
   }
 
@@ -62,7 +92,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           slivers: [
             _buildAppBar(),
             if (_isOffline)
-              SliverToBoxAdapter(
+              const SliverToBoxAdapter(
                 child: OfflineBanner(),
               ),
             if (_isLoading)
@@ -76,10 +106,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       const SizedBox(height: 8),
                       _buildHeroCard(),
-                      const SizedBox(height: 16),
-                      _buildBudgetWatchCard(),
-                      const SizedBox(height: 16),
-                      _buildSavingsGoalCard(),
+                      if (_highestUtilizedBudget != null) ...[
+                        const SizedBox(height: 16),
+                        _buildBudgetWatchCard(),
+                      ],
+                      if (_primaryGoal != null) ...[
+                        const SizedBox(height: 16),
+                        _buildSavingsGoalCard(),
+                      ],
                       const SizedBox(height: 16),
                       _buildRecentTransactionsSection(),
                       const SizedBox(height: 32),
@@ -105,20 +139,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       titleSpacing: 16,
       title: Row(
         children: [
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Good afternoon 👋',
+                Text(
+                  'Welcome 👋',
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textMedium,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                const Text(
-                  'Arjun Sharma',
+                Text(
+                  'My PocketPath',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -142,17 +176,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       actions: [
         IconButton(
-          onPressed: () => Navigator.of(context).pushNamed('/settings'),
+          onPressed: () => Navigator.of(context).pushNamed('/settings').then((_) => _loadData()),
           icon: const CircleAvatar(
             radius: 18,
             backgroundColor: AppColors.primaryLight,
-            child: Text(
-              'AS',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryDark,
-              ),
+            child: Icon(
+              Icons.settings_rounded,
+              size: 20,
+              color: AppColors.primaryDark,
             ),
           ),
           tooltip: 'Settings & Profile',
@@ -211,7 +242,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'Net Cash Flow',
             style: TextStyle(
               fontSize: 13,
-              color: AppColors.primaryDark.withOpacity(0.8),
+              color: AppColors.primaryDark.withValues(alpha: 0.8),
             ),
           ),
           const SizedBox(height: 4),
@@ -294,7 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 label,
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.primaryDark.withOpacity(0.8),
+                  color: AppColors.primaryDark.withValues(alpha: 0.8),
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -303,7 +334,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 4),
           Text(
             CurrencyFormatter.formatPaise(amount),
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
               color: AppColors.textDark,
@@ -335,7 +366,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         break;
     }
     return GestureDetector(
-      onTap: () => Navigator.of(context).pushNamed('/budgets'),
+      onTap: () => Navigator.of(context).pushNamed('/budgets').then((_) => _loadData()),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -349,12 +380,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
+                const Row(
                   children: [
-                    const Icon(Icons.donut_small_rounded,
+                    Icon(Icons.donut_small_rounded,
                         size: 16, color: AppColors.primary),
-                    const SizedBox(width: 6),
-                    const Text(
+                    SizedBox(width: 6),
+                    Text(
                       'Budget Watch',
                       style: TextStyle(
                         fontSize: 14,
@@ -368,7 +399,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
@@ -427,7 +458,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_primaryGoal == null) return const SizedBox.shrink();
     final goal = _primaryGoal!;
     return GestureDetector(
-      onTap: () => Navigator.of(context).pushNamed('/goals'),
+      onTap: () => Navigator.of(context).pushNamed('/goals').then((_) => _loadData()),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -441,12 +472,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
+                const Row(
                   children: [
-                    const Icon(Icons.savings_rounded,
+                    Icon(Icons.savings_rounded,
                         size: 16, color: AppColors.primary),
-                    const SizedBox(width: 6),
-                    const Text(
+                    SizedBox(width: 6),
+                    Text(
                       'Savings Goal',
                       style: TextStyle(
                         fontSize: 14,
@@ -525,7 +556,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             TextButton(
               onPressed: () =>
-                  Navigator.of(context).pushNamed('/transactions'),
+                  Navigator.of(context).pushNamed('/transactions').then((_) => _loadData()),
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.primary,
                 padding: const EdgeInsets.symmetric(
@@ -542,11 +573,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: 8),
         if (_recentTransactions.isEmpty)
-          const EmptyState(
+          EmptyState(
             emoji: '📭',
             title: 'No transactions yet',
-            subtitle:
-                'Transactions you add will appear here.',
+            subtitle: 'Tap below to record your first income or expense.',
+            action: ElevatedButton.icon(
+              onPressed: () => Navigator.of(context)
+                  .pushNamed('/add-expense')
+                  .then((_) => _loadData()),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add Transaction'),
+            ),
           )
         else
           Container(

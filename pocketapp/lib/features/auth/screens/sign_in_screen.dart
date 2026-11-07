@@ -135,7 +135,7 @@ class _SignInScreenState extends State<SignInScreen> {
       decoration: BoxDecoration(
         color: AppColors.expenseRedLight,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.expenseRed.withOpacity(0.3)),
+        border: Border.all(color: AppColors.expenseRed.withValues(alpha: 0.3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

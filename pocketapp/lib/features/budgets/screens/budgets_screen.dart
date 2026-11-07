@@ -3,6 +3,7 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../core/models/budget.dart';
 import '../../../core/models/transaction.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/month_selector.dart';
@@ -15,24 +16,31 @@ class BudgetsScreen extends StatefulWidget {
 }
 
 class _BudgetsScreenState extends State<BudgetsScreen> {
-  String _selectedMonth = 'October 2026';
+  late String _selectedMonth;
   bool _isLoading = true;
-  bool _isOffline = false;
+  final bool _isOffline = false;
   List<Budget> _budgets = [];
 
   @override
   void initState() {
     super.initState();
+    _selectedMonth = getCurrentMonthString();
     _loadData();
   }
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 700));
+    final selectedDt = parseMonthYear(_selectedMonth);
+    await StorageService().recalculateBudgets();
+    final list = await StorageService().getBudgets(
+      month: selectedDt.month,
+      year: selectedDt.year,
+    );
+
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _budgets = List.from(sampleBudgets);
+      _budgets = list;
     });
   }
 
@@ -44,6 +52,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         title: const Text('Category Budgets'),
         backgroundColor: AppColors.background,
         actions: [
+          IconButton(
+            onPressed: _showAddBudgetSheet,
+            icon: const Icon(Icons.add_rounded),
+            tooltip: 'Add Budget',
+            color: AppColors.primary,
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: MonthSelectorDropdown(
@@ -62,26 +76,31 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       body: _isLoading
           ? ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: 5,
-              itemBuilder: (_, __) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: const SkeletonCard(height: 120),
+              itemCount: 4,
+              itemBuilder: (context, index) => const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: SkeletonCard(height: 120),
               ),
             )
           : RefreshIndicator(
               color: AppColors.primary,
               onRefresh: _loadData,
               child: _budgets.isEmpty
-                  ? const EmptyState(
+                  ? EmptyState(
                       emoji: '📊',
-                      title: 'No budgets set',
+                      title: 'No budgets for $_selectedMonth',
                       subtitle:
-                          'Set spending limits for your categories to track expenses.',
+                          'Set spending limits for your categories to track expenses on your phone.',
+                      action: ElevatedButton.icon(
+                        onPressed: _showAddBudgetSheet,
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: const Text('Create Budget'),
+                      ),
                     )
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
                       itemCount: _budgets.length,
-                      separatorBuilder: (_, __) =>
+                      separatorBuilder: (context, index) =>
                           const SizedBox(height: 12),
                       itemBuilder: (context, i) {
                         return _BudgetCard(
@@ -96,29 +115,123 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     );
   }
 
+  void _showAddBudgetSheet() {
+    final existingCategories = _budgets.map((b) => b.category).toSet();
+    final availableCategories = TransactionCategory.values
+        .where((c) =>
+            c != TransactionCategory.salary &&
+            c != TransactionCategory.investment &&
+            !existingCategories.contains(c))
+        .toList();
+
+    if (availableCategories.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All categories already have a budget for this month!'),
+          backgroundColor: AppColors.neutralGrey,
+        ),
+      );
+      return;
+    }
+
+    TransactionCategory selectedCat = availableCategories.first;
+    final limitController = TextEditingController(text: '5000');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: AppColors.cardFill,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Add Category Budget',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<TransactionCategory>(
+                  initialValue: selectedCat,
+                  decoration: const InputDecoration(labelText: 'Category'),
+                  items: availableCategories
+                      .map((c) => DropdownMenuItem(
+                            value: c,
+                            child: Text('${c.emoji}  ${c.displayName}'),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) setSheetState(() => selectedCat = v);
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: limitController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Monthly Limit (₹)',
+                    prefixText: '₹ ',
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      final rupees = int.tryParse(limitController.text) ?? 5000;
+                      final selectedDt = parseMonthYear(_selectedMonth);
+                      final newBudget = Budget(
+                        id: 'b_${selectedCat.name}_${selectedDt.month}_${selectedDt.year}',
+                        category: selectedCat,
+                        limitPaise: rupees * 100,
+                        spentPaise: 0,
+                        month: selectedDt.month,
+                        year: selectedDt.year,
+                      );
+                      await StorageService().saveBudgets([newBudget]);
+                      await StorageService().recalculateBudgets();
+                      if (!ctx.mounted) return;
+                      Navigator.pop(ctx);
+                      _loadData();
+                    },
+                    child: const Text('Add Budget'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showEditLimitSheet(Budget budget) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _EditLimitSheet(
+      builder: (sheetContext) => _EditLimitSheet(
         budget: budget,
         isOffline: _isOffline,
-        onSave: (newLimit) {
-          setState(() {
-            final index = _budgets.indexWhere((b) => b.id == budget.id);
-            if (index != -1) {
-              _budgets[index] = Budget(
-                id: budget.id,
-                category: budget.category,
-                limitPaise: newLimit,
-                spentPaise: budget.spentPaise,
-                month: budget.month,
-                year: budget.year,
-              );
-            }
-          });
-          Navigator.pop(context);
+        onSave: (newLimit) async {
+          await StorageService().updateBudgetLimit(budget.id, newLimit);
+          if (!sheetContext.mounted) return;
+          Navigator.pop(sheetContext);
+          _loadData();
         },
       ),
     );
@@ -233,7 +346,7 @@ class _BudgetCard extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          '${percentage}%',
+                          '$percentage%',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
@@ -346,9 +459,9 @@ class _EditLimitSheetState extends State<_EditLimitSheet> {
                 Text(widget.budget.category.emoji,
                     style: const TextStyle(fontSize: 22)),
                 const SizedBox(width: 10),
-                Text(
+                const Text(
                   'Edit Budget Limit',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
                     color: AppColors.textDark,
@@ -362,33 +475,6 @@ class _EditLimitSheetState extends State<_EditLimitSheet> {
               style: const TextStyle(
                   fontSize: 13, color: AppColors.textMedium),
             ),
-            if (widget.isOffline) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.warningOchreLight,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.cloud_off_rounded,
-                        size: 16, color: AppColors.warningOchre),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'You are offline. Changes will be saved locally and synced when you reconnect.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.primaryDark,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
             const SizedBox(height: 20),
             Form(
               key: _formKey,

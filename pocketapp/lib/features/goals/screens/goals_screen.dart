@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../core/models/savings_goal.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/empty_state.dart';
 
@@ -24,11 +25,11 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 700));
+    final list = await StorageService().getSavingsGoals();
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _goals = List.from(sampleGoals);
+      _goals = list;
     });
   }
 
@@ -61,9 +62,9 @@ class _GoalsScreenState extends State<GoalsScreen> {
           ? ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: 3,
-              itemBuilder: (_, __) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: const SkeletonCard(height: 160),
+              itemBuilder: (context, index) => const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: SkeletonCard(height: 160),
               ),
             )
           : RefreshIndicator(
@@ -74,7 +75,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
                       emoji: '🎯',
                       title: 'No goals yet',
                       subtitle:
-                          'Create your first savings goal to start tracking your progress.',
+                          'Create your first savings goal stored right on your phone.',
                       action: ElevatedButton.icon(
                         onPressed: _showCreateGoalSheet,
                         icon: const Icon(Icons.add_rounded, size: 18),
@@ -87,13 +88,14 @@ class _GoalsScreenState extends State<GoalsScreen> {
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
                       itemCount: _goals.length,
-                      separatorBuilder: (_, __) =>
+                      separatorBuilder: (context, index) =>
                           const SizedBox(height: 12),
                       itemBuilder: (context, i) {
                         return _GoalCard(
                           goal: _goals[i],
                           onContribute: () =>
                               _showContributeSheet(_goals[i]),
+                          onDelete: () => _confirmDeleteGoal(_goals[i]),
                         );
                       },
                     ),
@@ -106,10 +108,12 @@ class _GoalsScreenState extends State<GoalsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _CreateGoalSheet(
-        onSave: (goal) {
-          setState(() => _goals.add(goal));
-          Navigator.pop(context);
+      builder: (sheetContext) => _CreateGoalSheet(
+        onSave: (goal) async {
+          await StorageService().saveSavingsGoal(goal);
+          if (!sheetContext.mounted) return;
+          Navigator.pop(sheetContext);
+          _loadData();
         },
       ),
     );
@@ -120,24 +124,42 @@ class _GoalsScreenState extends State<GoalsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ContributeSheet(
+      builder: (sheetContext) => _ContributeSheet(
         goal: goal,
-        onContribute: (amount) {
-          setState(() {
-            final index = _goals.indexWhere((g) => g.id == goal.id);
-            if (index != -1) {
-              final current = _goals[index];
-              _goals[index] = SavingsGoal(
-                id: current.id,
-                title: current.title,
-                targetPaise: current.targetPaise,
-                savedPaise: current.savedPaise + amount,
-                targetDate: current.targetDate,
-              );
-            }
-          });
-          Navigator.pop(context);
+        onContribute: (amount) async {
+          await StorageService().contributeToGoal(goal.id, amount);
+          if (!sheetContext.mounted) return;
+          Navigator.pop(sheetContext);
+          _loadData();
         },
+      ),
+    );
+  }
+
+  void _confirmDeleteGoal(SavingsGoal goal) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Delete Goal'),
+        content: Text('Are you sure you want to delete "${goal.title}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await StorageService().deleteGoal(goal.id);
+              _loadData();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.expenseRed,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }
@@ -146,18 +168,22 @@ class _GoalsScreenState extends State<GoalsScreen> {
 class _GoalCard extends StatelessWidget {
   final SavingsGoal goal;
   final VoidCallback onContribute;
+  final VoidCallback onDelete;
 
-  const _GoalCard({required this.goal, required this.onContribute});
+  const _GoalCard({
+    required this.goal,
+    required this.onContribute,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final months = [
+    const months = [
       '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     final dt = goal.targetDate;
-    final dateStr =
-        '${dt.day} ${months[dt.month]} ${dt.year}';
+    final dateStr = '${dt.day} ${months[dt.month]} ${dt.year}';
     final remaining = goal.targetPaise - goal.savedPaise;
     final isCompleted = goal.isCompleted;
 
@@ -168,7 +194,7 @@ class _GoalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isCompleted
-              ? AppColors.incomeGreen.withOpacity(0.3)
+              ? AppColors.incomeGreen.withValues(alpha: 0.3)
               : AppColors.border,
         ),
       ),
@@ -204,6 +230,14 @@ class _GoalCard extends StatelessWidget {
                       color: AppColors.incomeGreen,
                     ),
                   ),
+                )
+              else
+                IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline_rounded,
+                      size: 18, color: AppColors.textLight),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Delete Goal',
                 ),
             ],
           ),
@@ -321,7 +355,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
       context: context,
       initialDate: DateTime.now().add(const Duration(days: 90)),
       firstDate: DateTime.now().add(const Duration(days: 1)),
-      lastDate: DateTime(2030),
+      lastDate: DateTime(2035),
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
@@ -337,7 +371,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return Padding(
       padding: EdgeInsets.only(
@@ -449,8 +483,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                           final rupees = int.parse(
                               _targetController.text.replaceAll(',', ''));
                           widget.onSave(SavingsGoal(
-                            id:
-                                'g${DateTime.now().millisecondsSinceEpoch}',
+                            id: 'g${DateTime.now().millisecondsSinceEpoch}',
                             title: _titleController.text.trim(),
                             targetPaise: rupees * 100,
                             savedPaise: 0,

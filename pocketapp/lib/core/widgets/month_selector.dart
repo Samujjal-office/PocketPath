@@ -15,6 +15,9 @@ class MonthSelectorDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final validSelectedMonth =
+        months.contains(selectedMonth) ? selectedMonth : months.first;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -24,7 +27,7 @@ class MonthSelectorDropdown extends StatelessWidget {
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
-          value: selectedMonth,
+          value: validSelectedMonth,
           isDense: true,
           icon: const Icon(
             Icons.keyboard_arrow_down_rounded,
@@ -49,7 +52,32 @@ class MonthSelectorDropdown extends StatelessWidget {
   }
 }
 
-const List<String> kMonthOptions = [
+String getCurrentMonthString() {
+  final now = DateTime.now();
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return '${months[now.month - 1]} ${now.year}';
+}
+
+DateTime parseMonthYear(String monthStr) {
+  final parts = monthStr.split(' ');
+  if (parts.length == 2) {
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    final mIndex = months.indexOf(parts[0]);
+    final year = int.tryParse(parts[1]);
+    if (mIndex != -1 && year != null) {
+      return DateTime(year, mIndex + 1);
+    }
+  }
+  return DateTime.now();
+}
+
+final List<String> kMonthOptions = [
   'January 2026',
   'February 2026',
   'March 2026',
@@ -63,4 +91,3 @@ const List<String> kMonthOptions = [
   'November 2026',
   'December 2026',
 ];
-

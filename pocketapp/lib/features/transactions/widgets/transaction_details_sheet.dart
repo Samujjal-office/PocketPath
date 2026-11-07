@@ -5,13 +5,17 @@ import '../../../core/models/transaction.dart';
 
 class TransactionDetailsSheet extends StatelessWidget {
   final Transaction transaction;
+  final VoidCallback? onDelete;
 
-  const TransactionDetailsSheet({super.key, required this.transaction});
+  const TransactionDetailsSheet({
+    super.key,
+    required this.transaction,
+    this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isIncome =
-        transaction.direction == TransactionDirection.income;
+    final isIncome = transaction.direction == TransactionDirection.income;
     const months = [
       '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
@@ -31,13 +35,13 @@ class TransactionDetailsSheet extends StatelessWidget {
         break;
       case TransactionStatus.failed:
         statusColor = AppColors.expenseRed;
-        statusLabel = 'Failed (Network)';
+        statusLabel = 'Failed';
         statusIcon = Icons.wifi_off_rounded;
         break;
       case TransactionStatus.synced:
         statusColor = AppColors.incomeGreen;
-        statusLabel = 'Synced';
-        statusIcon = Icons.cloud_done_rounded;
+        statusLabel = 'Stored Locally';
+        statusIcon = Icons.check_circle_outline_rounded;
         break;
     }
 
@@ -113,7 +117,7 @@ class TransactionDetailsSheet extends StatelessWidget {
                   _DetailRow(label: 'Date & Time', value: dateStr),
                   const Divider(height: 24, color: AppColors.border),
                   _DetailRow(
-                    label: 'Direction',
+                    label: 'Type',
                     value: isIncome ? 'Income' : 'Expense',
                   ),
                   const Divider(height: 24, color: AppColors.border),
@@ -131,14 +135,13 @@ class TransactionDetailsSheet extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
+                          color: statusColor.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(statusIcon,
-                                size: 14, color: statusColor),
+                            Icon(statusIcon, size: 14, color: statusColor),
                             const SizedBox(width: 4),
                             Text(
                               statusLabel,
@@ -153,41 +156,35 @@ class TransactionDetailsSheet extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (transaction.note != null) ...[
+                  if (transaction.note != null && transaction.note!.isNotEmpty) ...[
                     const Divider(height: 24, color: AppColors.border),
-                    _DetailRow(
-                        label: 'Note', value: transaction.note!),
-                  ],
-                  if (transaction.status == TransactionStatus.failed) ...[
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.expenseRedLight,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.info_outline_rounded,
-                              size: 16, color: AppColors.expenseRed),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'This transaction failed to sync due to a network error and will be retried automatically.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.expenseRed,
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _DetailRow(label: 'Note', value: transaction.note!),
                   ],
                 ],
               ),
             ),
+            if (onDelete != null) ...[
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      onDelete!();
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.expenseRed,
+                      side: const BorderSide(color: AppColors.expenseRed),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Delete Transaction'),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 32),
           ],
         ),

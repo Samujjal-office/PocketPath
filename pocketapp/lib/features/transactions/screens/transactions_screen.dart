@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../core/models/transaction.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/empty_state.dart';
+import '../../../core/widgets/month_selector.dart';
 import '../widgets/transaction_details_sheet.dart';
 
 class TransactionsScreen extends StatefulWidget {
@@ -15,16 +17,15 @@ class TransactionsScreen extends StatefulWidget {
 
 class _TransactionsScreenState extends State<TransactionsScreen> {
   final _searchController = TextEditingController();
+  final _storageService = StorageService();
+
   bool _isLoading = true;
   String _searchQuery = '';
   String? _selectedDirection; // 'Income', 'Expense', null
   TransactionCategory? _selectedCategory;
-  String _selectedMonth = 'October 2026';
+  String _selectedMonth = 'All Months';
 
   List<Transaction> _transactions = [];
-  bool _isLoadingMore = false;
-  bool _hasMore = true;
-  int _page = 1;
 
   @override
   void initState() {
@@ -38,22 +39,13 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     super.dispose();
   }
 
-  Future<void> _loadTransactions({bool refresh = true}) async {
-    if (refresh) {
-      setState(() {
-        _isLoading = true;
-        _page = 1;
-        _hasMore = true;
-      });
-    } else {
-      setState(() => _isLoadingMore = true);
-    }
-    await Future.delayed(const Duration(milliseconds: 700));
+  Future<void> _loadTransactions() async {
+    setState(() => _isLoading = true);
+    final txs = await _storageService.getTransactions();
     if (!mounted) return;
     setState(() {
       _isLoading = false;
-      _isLoadingMore = false;
-      _transactions = List.from(sampleTransactions);
+      _transactions = txs;
     });
   }
 
@@ -61,16 +53,29 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     return _transactions.where((tx) {
       final qMatch = _searchQuery.isEmpty ||
           tx.merchant.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          (tx.note?.toLowerCase().contains(_searchQuery.toLowerCase()) ??
-              false);
+          (tx.note?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false);
+
       final directionMatch = _selectedDirection == null ||
           ((_selectedDirection == 'Income') ==
               (tx.direction == TransactionDirection.income));
+
       final categoryMatch =
           _selectedCategory == null || tx.category == _selectedCategory;
-      return qMatch && directionMatch && categoryMatch;
+
+      final monthMatch = _selectedMonth == 'All Months' ||
+          _formatMonthYear(tx.dateTime) == _selectedMonth;
+
+      return qMatch && directionMatch && categoryMatch && monthMatch;
     }).toList()
       ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
+  }
+
+  String _formatMonthYear(DateTime dt) {
+    const months = [
+      '', 'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return '${months[dt.month]} ${dt.year}';
   }
 
   Map<String, List<Transaction>> get _grouped {
@@ -97,6 +102,219 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     return '${dt.day} ${months[dt.month]} ${dt.year}';
   }
 
+  void _showDownloadStatementDialog() {
+    final txsToExport = _filtered;
+    if (txsToExport.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No transactions to export. Add some transactions first.'),
+          backgroundColor: AppColors.expenseRed,
+        ),
+      );
+      return;
+    }
+
+    final totalIncome = txsToExport
+        .where((t) => t.direction == TransactionDirection.income)
+        .fold<int>(0, (sum, t) => sum + t.amountPaise);
+    final totalExpense = txsToExport
+        .where((t) => t.direction == TransactionDirection.expense)
+        .fold<int>(0, (sum, t) => sum + t.amountPaise);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.cardFill,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.file_download_rounded,
+                      color: AppColors.primaryDark,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Download Statement',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark,
+                          ),
+                        ),
+                        Text(
+                          'Export transactions to phone storage',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMedium,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  children: [
+                    _StatementSummaryRow(
+                      label: 'Filter Scope',
+                      value: _selectedMonth,
+                    ),
+                    const Divider(height: 16),
+                    _StatementSummaryRow(
+                      label: 'Total Entries',
+                      value: '${txsToExport.length} transactions',
+                    ),
+                    const Divider(height: 16),
+                    _StatementSummaryRow(
+                      label: 'Total Income',
+                      value: CurrencyFormatter.formatPaise(totalIncome),
+                      valueColor: AppColors.incomeGreen,
+                    ),
+                    const Divider(height: 16),
+                    _StatementSummaryRow(
+                      label: 'Total Expenses',
+                      value: CurrencyFormatter.formatPaise(totalExpense),
+                      valueColor: AppColors.expenseRed,
+                    ),
+                    const Divider(height: 16),
+                    const _StatementSummaryRow(
+                      label: 'File Format',
+                      value: 'CSV Spreadsheet (.csv)',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _handleShareStatement(txsToExport);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: const BorderSide(color: AppColors.primary),
+                        foregroundColor: AppColors.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.share_rounded, size: 18),
+                      label: const Text('Share File'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _handleDownloadStatement(txsToExport);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        backgroundColor: AppColors.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('Save to Storage'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleDownloadStatement(List<Transaction> txs) async {
+    try {
+      final file = await _storageService.downloadStatement(transactions: txs);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Statement saved to:\n${file.path}'),
+          backgroundColor: AppColors.incomeGreen,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'SHARE',
+            textColor: Colors.white,
+            onPressed: () => _handleShareStatement(txs),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to download statement: $e'),
+          backgroundColor: AppColors.expenseRed,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleShareStatement(List<Transaction> txs) async {
+    try {
+      await _storageService.downloadAndShareStatement(transactions: txs);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to share statement: $e'),
+          backgroundColor: AppColors.expenseRed,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -104,6 +322,19 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       appBar: AppBar(
         title: const Text('Transactions'),
         backgroundColor: AppColors.background,
+        actions: [
+          IconButton(
+            onPressed: _showDownloadStatementDialog,
+            icon: const Icon(Icons.download_for_offline_rounded),
+            tooltip: 'Download Statement',
+            color: AppColors.primary,
+          ),
+          IconButton(
+            onPressed: _loadTransactions,
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -113,23 +344,47 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           Expanded(
             child: _isLoading
                 ? ListView.builder(
-                    itemCount: 8,
-                    itemBuilder: (_, __) => const SkeletonTransactionItem(),
+                    itemCount: 6,
+                    itemBuilder: (context, index) =>
+                        const SkeletonTransactionItem(),
                   )
                 : _filtered.isEmpty
-                    ? const EmptyState(
-                        emoji: '🔍',
-                        title: 'No transactions found',
-                        subtitle:
-                            'Try adjusting your search or filter criteria.',
+                    ? EmptyState(
+                        emoji: '🧾',
+                        title: _transactions.isEmpty
+                            ? 'No transactions yet'
+                            : 'No matching transactions',
+                        subtitle: _transactions.isEmpty
+                            ? 'Add your first income or expense to start tracking!'
+                            : 'Try adjusting your search or filter criteria.',
+                        action: _transactions.isEmpty
+                            ? ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.of(context)
+                                      .pushNamed('/add-expense')
+                                      .then((_) => _loadTransactions());
+                                },
+                                icon: const Icon(Icons.add_rounded, size: 18),
+                                label: const Text('Add Transaction'),
+                              )
+                            : null,
                       )
                     : RefreshIndicator(
                         color: AppColors.primary,
-                        onRefresh: () => _loadTransactions(),
+                        onRefresh: _loadTransactions,
                         child: _buildList(),
                       ),
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showDownloadStatementDialog,
+        backgroundColor: AppColors.primary,
+        icon: const Icon(Icons.file_download_rounded, color: Colors.white),
+        label: const Text(
+          'Download Statement',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
       ),
     );
   }
@@ -186,12 +441,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           _FilterChip(
             label: _selectedMonth,
             icon: Icons.calendar_month_rounded,
-            isSelected: true,
+            isSelected: _selectedMonth != 'All Months',
             onTap: () => _showMonthPicker(),
           ),
           const SizedBox(width: 8),
           _FilterChip(
-            label: _selectedDirection ?? 'All',
+            label: _selectedDirection ?? 'All Types',
             icon: Icons.swap_vert_rounded,
             isSelected: _selectedDirection != null,
             onTap: () => _cycleDirection(),
@@ -203,7 +458,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             isSelected: _selectedCategory != null,
             onTap: () => _showCategoryPicker(),
           ),
-          if (_selectedDirection != null || _selectedCategory != null) ...[
+          if (_selectedDirection != null ||
+              _selectedCategory != null ||
+              _selectedMonth != 'All Months') ...[
             const SizedBox(width: 8),
             _FilterChip(
               label: 'Clear',
@@ -212,6 +469,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
               onTap: () => setState(() {
                 _selectedDirection = null;
                 _selectedCategory = null;
+                _selectedMonth = 'All Months';
               }),
             ),
           ]
@@ -221,14 +479,43 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   void _showMonthPicker() {
+    final availableMonths = ['All Months', ...kMonthOptions];
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => _MonthPickerSheet(
-        selected: _selectedMonth,
-        onSelect: (m) {
-          setState(() => _selectedMonth = m);
-          Navigator.pop(ctx);
-        },
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Filter by Month',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                children: availableMonths
+                    .map((m) => ListTile(
+                          title: Text(m),
+                          trailing: m == _selectedMonth
+                              ? const Icon(Icons.check_rounded,
+                                  color: AppColors.primary)
+                              : null,
+                          onTap: () {
+                            setState(() => _selectedMonth = m);
+                            Navigator.pop(ctx);
+                          },
+                        ))
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
@@ -236,9 +523,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   void _cycleDirection() {
     setState(() {
       if (_selectedDirection == null) {
-        _selectedDirection = 'Income';
-      } else if (_selectedDirection == 'Income') {
         _selectedDirection = 'Expense';
+      } else if (_selectedDirection == 'Expense') {
+        _selectedDirection = 'Income';
       } else {
         _selectedDirection = null;
       }
@@ -263,19 +550,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     final keys = groups.keys.toList();
 
     return ListView.builder(
-      itemCount: keys.length + (_isLoadingMore ? 1 : 0),
+      padding: const EdgeInsets.only(bottom: 80),
+      itemCount: keys.length,
       itemBuilder: (context, i) {
-        if (i == keys.length) {
-          return const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppColors.primary,
-              ),
-            ),
-          );
-        }
         final key = keys[i];
         final txs = groups[key]!;
         return _buildGroup(key, txs);
@@ -288,8 +565,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding:
-              const EdgeInsets.fromLTRB(16, 16, 16, 6),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
           child: Text(
             label,
             style: const TextStyle(
@@ -338,7 +614,57 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => TransactionDetailsSheet(transaction: tx),
+      builder: (_) => TransactionDetailsSheet(
+        transaction: tx,
+        onDelete: () async {
+          await _storageService.deleteTransaction(tx.id);
+          await _loadTransactions();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Transaction deleted from storage'),
+                backgroundColor: AppColors.neutralGrey,
+              ),
+            );
+          }
+        },
+      ),
+    );
+  }
+}
+
+class _StatementSummaryRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _StatementSummaryRow({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            color: AppColors.textMedium,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: valueColor ?? AppColors.textDark,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -361,8 +687,7 @@ class _FilterChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primaryLight
@@ -424,23 +749,6 @@ class _TransactionListItem extends StatelessWidget {
         '${transaction.dateTime.day} ${months[transaction.dateTime.month]}, '
         '${_pad(transaction.dateTime.hour)}:${_pad(transaction.dateTime.minute)}';
 
-    Color statusColor;
-    String statusLabel;
-    switch (transaction.status) {
-      case TransactionStatus.pending:
-        statusColor = AppColors.warningOchre;
-        statusLabel = 'Pending';
-        break;
-      case TransactionStatus.failed:
-        statusColor = AppColors.expenseRed;
-        statusLabel = 'Failed (Network)';
-        break;
-      case TransactionStatus.synced:
-        statusColor = AppColors.incomeGreen;
-        statusLabel = 'Synced';
-        break;
-    }
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -494,15 +802,15 @@ class _TransactionListItem extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 1),
                           decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.1),
+                            color: AppColors.incomeGreen.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: Text(
-                            statusLabel,
+                          child: const Text(
+                            'Stored',
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w600,
-                              color: statusColor,
+                              color: AppColors.incomeGreen,
                             ),
                           ),
                         ),
@@ -527,49 +835,6 @@ class _TransactionListItem extends StatelessWidget {
   }
 
   String _pad(int n) => n.toString().padLeft(2, '0');
-}
-
-class _MonthPickerSheet extends StatelessWidget {
-  final String selected;
-  final ValueChanged<String> onSelect;
-
-  const _MonthPickerSheet(
-      {required this.selected, required this.onSelect});
-
-  @override
-  Widget build(BuildContext context) {
-    const months = [
-      'January 2026', 'February 2026', 'March 2026', 'April 2026',
-      'May 2026', 'June 2026', 'July 2026', 'August 2026',
-      'September 2026', 'October 2026', 'November 2026', 'December 2026',
-    ];
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'Select Month',
-              style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textDark),
-            ),
-          ),
-          ...months.map((m) => ListTile(
-                title: Text(m),
-                trailing: m == selected
-                    ? const Icon(Icons.check_rounded,
-                        color: AppColors.primary)
-                    : null,
-                onTap: () => onSelect(m),
-              )),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
 }
 
 class _CategoryPickerSheet extends StatelessWidget {
@@ -599,8 +864,7 @@ class _CategoryPickerSheet extends StatelessWidget {
           ListTile(
             title: const Text('All Categories'),
             trailing: selected == null
-                ? const Icon(Icons.check_rounded,
-                    color: AppColors.primary)
+                ? const Icon(Icons.check_rounded, color: AppColors.primary)
                 : null,
             onTap: () => onSelect(null),
           ),
@@ -609,8 +873,7 @@ class _CategoryPickerSheet extends StatelessWidget {
                     Text(c.emoji, style: const TextStyle(fontSize: 20)),
                 title: Text(c.displayName),
                 trailing: c == selected
-                    ? const Icon(Icons.check_rounded,
-                        color: AppColors.primary)
+                    ? const Icon(Icons.check_rounded, color: AppColors.primary)
                     : null,
                 onTap: () => onSelect(c),
               )),

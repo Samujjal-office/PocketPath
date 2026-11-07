@@ -45,6 +45,13 @@ extension TransactionCategoryExtension on TransactionCategory {
       case TransactionCategory.other: return '📦';
     }
   }
+
+  static TransactionCategory fromString(String name) {
+    return TransactionCategory.values.firstWhere(
+      (e) => e.name.toLowerCase() == name.toLowerCase(),
+      orElse: () => TransactionCategory.other,
+    );
+  }
 }
 
 class Transaction {
@@ -67,9 +74,62 @@ class Transaction {
     required this.status,
     this.note,
   });
+
+  Transaction copyWith({
+    String? id,
+    String? merchant,
+    TransactionCategory? category,
+    TransactionDirection? direction,
+    int? amountPaise,
+    DateTime? dateTime,
+    TransactionStatus? status,
+    String? note,
+  }) {
+    return Transaction(
+      id: id ?? this.id,
+      merchant: merchant ?? this.merchant,
+      category: category ?? this.category,
+      direction: direction ?? this.direction,
+      amountPaise: amountPaise ?? this.amountPaise,
+      dateTime: dateTime ?? this.dateTime,
+      status: status ?? this.status,
+      note: note ?? this.note,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'merchant': merchant,
+      'category': category.name,
+      'direction': direction.name,
+      'amountPaise': amountPaise,
+      'dateTime': dateTime.toIso8601String(),
+      'status': status.name,
+      'note': note,
+    };
+  }
+
+  factory Transaction.fromJson(Map<String, dynamic> json) {
+    return Transaction(
+      id: json['id'] as String,
+      merchant: json['merchant'] as String? ?? 'Unknown',
+      category: TransactionCategoryExtension.fromString(json['category'] as String? ?? 'other'),
+      direction: (json['direction'] as String? ?? 'expense') == 'income'
+          ? TransactionDirection.income
+          : TransactionDirection.expense,
+      amountPaise: (json['amountPaise'] as num?)?.toInt() ?? 0,
+      dateTime: DateTime.tryParse(json['dateTime'] as String? ?? '') ?? DateTime.now(),
+      status: TransactionStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => TransactionStatus.synced,
+      ),
+      note: json['note'] as String?,
+    );
+  }
 }
 
-// Sample data for demo
+// Sample data kept only for optional seeding in development
 final List<Transaction> sampleTransactions = [
   Transaction(
     id: '1',
@@ -77,7 +137,7 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.food,
     direction: TransactionDirection.expense,
     amountPaise: 34900,
-    dateTime: DateTime(2026, 10, 28, 19, 30),
+    dateTime: DateTime.now().subtract(const Duration(days: 1, hours: 2)),
     status: TransactionStatus.synced,
     note: 'Dinner with team',
   ),
@@ -87,7 +147,7 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.transport,
     direction: TransactionDirection.expense,
     amountPaise: 22000,
-    dateTime: DateTime(2026, 10, 27, 9, 15),
+    dateTime: DateTime.now().subtract(const Duration(days: 2, hours: 5)),
     status: TransactionStatus.synced,
   ),
   Transaction(
@@ -96,9 +156,9 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.salary,
     direction: TransactionDirection.income,
     amountPaise: 8500000,
-    dateTime: DateTime(2026, 10, 25, 10, 0),
+    dateTime: DateTime.now().subtract(const Duration(days: 5)),
     status: TransactionStatus.synced,
-    note: 'October 2026 salary',
+    note: 'Monthly salary',
   ),
   Transaction(
     id: '4',
@@ -106,7 +166,7 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.shopping,
     direction: TransactionDirection.expense,
     amountPaise: 189900,
-    dateTime: DateTime(2026, 10, 24, 14, 20),
+    dateTime: DateTime.now().subtract(const Duration(days: 6)),
     status: TransactionStatus.pending,
   ),
   Transaction(
@@ -115,7 +175,7 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.entertainment,
     direction: TransactionDirection.expense,
     amountPaise: 64900,
-    dateTime: DateTime(2026, 10, 22, 11, 0),
+    dateTime: DateTime.now().subtract(const Duration(days: 8)),
     status: TransactionStatus.failed,
     note: 'Monthly subscription',
   ),
@@ -125,16 +185,16 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.health,
     direction: TransactionDirection.expense,
     amountPaise: 87500,
-    dateTime: DateTime(2026, 10, 20, 16, 45),
+    dateTime: DateTime.now().subtract(const Duration(days: 10)),
     status: TransactionStatus.synced,
   ),
   Transaction(
     id: '7',
-    merchant: 'BESCOM',
+    merchant: 'Electricity Board',
     category: TransactionCategory.utilities,
     direction: TransactionDirection.expense,
     amountPaise: 234000,
-    dateTime: DateTime(2026, 10, 18, 12, 0),
+    dateTime: DateTime.now().subtract(const Duration(days: 12)),
     status: TransactionStatus.synced,
     note: 'Electricity bill',
   ),
@@ -144,7 +204,7 @@ final List<Transaction> sampleTransactions = [
     category: TransactionCategory.food,
     direction: TransactionDirection.expense,
     amountPaise: 45600,
-    dateTime: DateTime(2026, 10, 15, 20, 0),
+    dateTime: DateTime.now().subtract(const Duration(days: 15)),
     status: TransactionStatus.synced,
   ),
 ];
